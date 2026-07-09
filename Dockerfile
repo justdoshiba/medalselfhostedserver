@@ -2,7 +2,7 @@
 FROM rust:latest AS builder
 WORKDIR /app
 COPY . .
-RUN cargo build --release -p medal-clone-server
+RUN cargo build --release -p medal-clone-server && cargo build --release -p medal-clone-watcher
 
 FROM debian:bookworm-slim AS runtime
 WORKDIR /app
@@ -13,6 +13,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /app/target/release/medal-clone-server /app/medal-clone-server
+COPY --from=builder /app/target/release/medal-clone-watcher /app/medal-clone-watcher
 RUN mkdir -p /app/data/db /app/data/storage
 
 EXPOSE 8080
