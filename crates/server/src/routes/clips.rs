@@ -32,6 +32,57 @@ pub async fn get_clip(
     }
 }
 
+pub async fn list_clips(
+    pool: web::Data<SqlitePool>,
+    cfg: web::Data<Config>,
+) -> actix_web::Result<HttpResponse> {
+    let clips = sqlx::query_as::<_, Clip>(
+        "SELECT * FROM clips ORDER BY created_at DESC LIMIT 100",
+    )
+    .fetch_all(pool.get_ref())
+    .await
+    .map_err(|e| actix_web::error::ErrorInternalServerError(e))?;
+
+    let common: Vec<medal_clone_common::Clip> = clips
+        .into_iter()
+        .map(|c| c.to_common(&cfg.server.base_url))
+        .collect();
+
+    Ok(HttpResponse::Ok().json(common))
+}
+
+pub async fn delete_clip(
+    pool: web::Data<SqlitePool>,
+    storage: web::Data<Storage>,
+    path: web::Path<String>,
+) -> actix_web::Result<HttpResponse> {
+    let slug = path.into_inner();
+
+    let clip = sqlx::query_as::<_, Clip>("SELECT * FROM clips WHERE slug = ?")
+        .bind(&slug)
+        .fetch_optional(pool.get_ref())
+        .await
+        .map_err(|e| actix_web::error::ErrorInternalServerError(e))?;
+
+    match clip {
+        Some(c) => {
+            let _ = storage.delete_object(&c.filename).await;
+            if let Some(ref thumb) = c.thumbnail_path {
+                let _ = storage.delete_object(thumb).await;
+            }
+
+            sqlx::query("DELETE FROM clips WHERE slug = ?")
+                .bind(&slug)
+                .execute(pool.get_ref())
+                .await
+                .map_err(|e| actix_web::error::ErrorInternalServerError(e))?;
+
+            Ok(HttpResponse::Ok().json(serde_json::json!({"deleted": true})))
+        }
+        None => Ok(HttpResponse::NotFound().finish()),
+    }
+}
+
 pub async fn serve_video(
     pool: web::Data<SqlitePool>,
     storage: web::Data<Storage>,
@@ -48,6 +99,14 @@ pub async fn serve_video(
 
     match clip {
         Some(c) => {
+            let content_type = if c.filename.ends_with(".mov") {
+                "video/quicktime"
+            } else if c.filename.ends_with(".webm") {
+                "video/webm"
+            } else {
+                "video/mp4"
+            };
+
             let range_header = req
                 .headers()
                 .get("Range")
@@ -61,7 +120,7 @@ pub async fn serve_video(
                     {
                         Ok(resp) => {
                             return Ok(HttpResponse::PartialContent()
-                                .insert_header(("Content-Type", "video/mp4"))
+                                .insert_header(("Content-Type", content_type))
                                 .insert_header(("Accept-Ranges", "bytes"))
                                 .insert_header((
                                     "Content-Range",
@@ -88,7 +147,7 @@ pub async fn serve_video(
 
             match storage.get_object(&c.filename).await {
                 Ok(data) => Ok(HttpResponse::Ok()
-                    .insert_header(("Content-Type", "video/mp4"))
+                    .insert_header(("Content-Type", content_type))
                     .insert_header(("Accept-Ranges", "bytes"))
                     .insert_header(("Content-Length", data.len().to_string()))
                     .insert_header((

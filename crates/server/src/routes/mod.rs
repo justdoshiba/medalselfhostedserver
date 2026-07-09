@@ -13,6 +13,7 @@ pub fn configure(cfg: &mut actix_web::web::ServiceConfig) {
         .service(
             actix_web::web::scope("/api")
                 .route("/upload", actix_web::web::post().to(upload::upload_clip))
+                .route("/clips", actix_web::web::get().to(clips::list_clips))
                 .route("/clips/{slug}", actix_web::web::get().to(clips::get_clip))
                 .route(
                     "/clips/{slug}/video",
@@ -21,6 +22,10 @@ pub fn configure(cfg: &mut actix_web::web::ServiceConfig) {
                 .route(
                     "/clips/{slug}/thumb",
                     actix_web::web::get().to(clips::serve_thumbnail),
+                )
+                .route(
+                    "/clips/{slug}",
+                    actix_web::web::delete().to(clips::delete_clip),
                 ),
         )
         .route("/clip/{slug}", actix_web::web::get().to(embed::clip_page))
