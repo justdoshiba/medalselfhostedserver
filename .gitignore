@@ -1,0 +1,7 @@
+/target/
+data/storage/*
+!data/storage/.gitkeep
+data/db/*
+!data/db/.gitkeep
+.env
+*.log

@@ -1,0 +1,12 @@
+# Medal Clone Server — default configuration
+# Copy to config.toml or set env vars to override.
+
+[server]
+host = "0.0.0.0"
+port = 8080
+base_url = "http://localhost:8080"
+data_dir = "data"
+upload_token = "change-me-to-a-random-secret"
+
+[database]
+url = "sqlite:data/db/medal-clone.db?mode=rwc"

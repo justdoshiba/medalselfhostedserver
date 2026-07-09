@@ -1,0 +1,9 @@
+[package]
+name = "medal-clone-common"
+version = "0.1.0"
+edition.workspace = true
+
+[dependencies]
+serde = { version = "1.0.228", features = ["derive"] }
+uuid = { version = "1.23.4", features = ["v4", "serde"] }
+chrono = { version = "0.4.45", features = ["serde"] }
