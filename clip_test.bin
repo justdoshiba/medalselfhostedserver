@@ -1,0 +1,1 @@
+range error: Got HTTP 400 with content '<?xml version="1.0" encoding="UTF-8"?><Error><Code>InvalidRequest</Code><Message>Bad request: signed header `content-length` is not present</Message><Resource>/clips/a459f89e-74aa-41bd-9987-118328f3b2a6.mp4</Resource><Region>garage</Region></Error>'

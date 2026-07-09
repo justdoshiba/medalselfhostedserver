@@ -6,7 +6,7 @@ RUN cargo build --release -p medal-clone-server && cargo build --release -p meda
 
 FROM debian:bookworm-slim AS runtime
 WORKDIR /app
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get update -o Acquire::AllowInsecureRepositories=true -o Acquire::AllowDowngradeToInsecureRepositories=true && apt-get install -y --no-install-recommends -o APT::Get::AllowUnauthenticated=true \
     ca-certificates \
     curl \
     ffmpeg \
