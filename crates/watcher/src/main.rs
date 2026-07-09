@@ -41,7 +41,7 @@ async fn main() -> anyhow::Result<()> {
 
     let watch_dir = cli.watch_dir.unwrap_or_else(|| {
         dirs::video_dir()
-            .map(|p| p.join("Medal"))
+            .map(|p| p.join("Medal").join("Clips"))
             .unwrap_or_else(|| PathBuf::from("."))
     });
 
@@ -53,7 +53,7 @@ async fn main() -> anyhow::Result<()> {
 
     let (tx, rx) = mpsc::channel::<notify::Result<notify::Event>>();
     let mut watcher = RecommendedWatcher::new(tx, Config::default())?;
-    watcher.watch(&watch_dir, RecursiveMode::NonRecursive)?;
+    watcher.watch(&watch_dir, RecursiveMode::Recursive)?;
 
     let upload_url = format!("{}/api/upload", cli.server_url);
     let token = cli.upload_token.clone();
