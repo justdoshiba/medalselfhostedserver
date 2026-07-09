@@ -20,5 +20,6 @@ anyhow = "1.0.100"
 nanoid = "0.5.0"
 futures-util = "0.3.31"
 mime_guess = "2.0.5"
+rust-s3 = "0.37.2"
 
 medal-clone-common = { path = "../common" }
