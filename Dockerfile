@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-FROM rust:latest AS builder
+FROM rust:slim-bookworm AS builder
 WORKDIR /app
 COPY . .
 RUN cargo build --release -p medal-clone-server && cargo build --release -p medal-clone-watcher

@@ -1,45 +1,59 @@
+use clap::Parser;
 use notify::{Config, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use std::path::PathBuf;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 use tracing::{error, info, warn};
 
+#[derive(Parser, Debug)]
+#[command(name = "medal-clone-watcher", version, about = "Watches Medal output folder and uploads clips to your server")]
 struct Cli {
-    watch_dir: PathBuf,
+    #[arg(short, long, env = "WATCH_DIR")]
+    watch_dir: Option<PathBuf>,
+
+    #[arg(short = 'u', long = "server", env = "SERVER_URL", default_value = "http://localhost:8080")]
     server_url: String,
+
+    #[arg(short, long, env = "UPLOAD_TOKEN")]
     upload_token: String,
+
+    #[arg(long, help = "Install to Windows startup (Run key in Registry)")]
+    install: bool,
+
+    #[arg(long, help = "Remove from Windows startup")]
+    uninstall: bool,
 }
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    let cli = Cli::parse();
+
+    if cli.install {
+        return install_startup().await;
+    }
+    if cli.uninstall {
+        return uninstall_startup().await;
+    }
+
     tracing_subscriber::fmt()
         .with_env_filter("medal_clone_watcher=info")
         .init();
 
-    let cli = Cli {
-        watch_dir: PathBuf::from(
-            std::env::var("WATCH_DIR")
-                .unwrap_or_else(|_| dirs::video_dir()
-                    .map(|p| p.join("Medal"))
-                    .unwrap_or_else(|| PathBuf::from("."))
-                    .to_string_lossy()
-                    .to_string()),
-        ),
-        server_url: std::env::var("SERVER_URL")
-            .unwrap_or_else(|_| "http://localhost:8080".into()),
-        upload_token: std::env::var("UPLOAD_TOKEN")
-            .unwrap_or_else(|_| "change-me".into()),
-    };
+    let watch_dir = cli.watch_dir.unwrap_or_else(|| {
+        dirs::video_dir()
+            .map(|p| p.join("Medal"))
+            .unwrap_or_else(|| PathBuf::from("."))
+    });
 
     info!(
         "Watching {} for new clips, uploading to {}",
-        cli.watch_dir.display(),
+        watch_dir.display(),
         cli.server_url
     );
 
     let (tx, rx) = mpsc::channel::<notify::Result<notify::Event>>();
     let mut watcher = RecommendedWatcher::new(tx, Config::default())?;
-    watcher.watch(&cli.watch_dir, RecursiveMode::NonRecursive)?;
+    watcher.watch(&watch_dir, RecursiveMode::NonRecursive)?;
 
     let upload_url = format!("{}/api/upload", cli.server_url);
     let token = cli.upload_token.clone();
@@ -187,4 +201,54 @@ async fn wait_for_stability(path: &PathBuf) -> bool {
     }
 
     false
+}
+
+async fn install_startup() -> anyhow::Result<()> {
+    let exe = std::env::current_exe()?;
+    let path = exe.to_string_lossy().to_string();
+
+    #[cfg(target_os = "windows")]
+    {
+        use winreg::enums::HKEY_CURRENT_USER;
+        use winreg::RegKey;
+
+        let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+        let (key, _disp) = hkcu.create_subkey(r"Software\Microsoft\Windows\CurrentVersion\Run")?;
+        key.set_value("MedalCloneWatcher", &path)?;
+        println!("Installed to HKCU\\...\\Run: {}", path);
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        println!("--install is only supported on Windows");
+        println!("To auto-start on Linux/macOS, add this binary to your DE/WM autostart");
+        println!("Binary path: {path}");
+    }
+
+    Ok(())
+}
+
+async fn uninstall_startup() -> anyhow::Result<()> {
+    #[cfg(target_os = "windows")]
+    {
+        use winreg::enums::HKEY_CURRENT_USER;
+        use winreg::RegKey;
+
+        let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+        let run = hkcu.open_subkey_with_flags(
+            r"Software\Microsoft\Windows\CurrentVersion\Run",
+            winreg::enums::KEY_WRITE,
+        )?;
+        match run.delete_value("MedalCloneWatcher") {
+            Ok(_) => println!("Removed from startup"),
+            Err(e) => println!("Not found in startup (already removed): {e}"),
+        }
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        println!("--uninstall is only supported on Windows");
+    }
+
+    Ok(())
 }
