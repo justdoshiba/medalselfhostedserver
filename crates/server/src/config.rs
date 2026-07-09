@@ -17,6 +17,7 @@ pub struct ServerConfig {
     pub port: u16,
     pub base_url: String,
     pub upload_token: String,
+    pub data_dir: String,
 }
 
 pub struct DatabaseConfig {
@@ -62,6 +63,7 @@ impl Config {
                     .unwrap_or_else(|_| "http://localhost:8080".into()),
                 upload_token: std::env::var("UPLOAD_TOKEN")
                     .unwrap_or_else(|_| "change-me-to-a-random-secret".into()),
+                data_dir: std::env::var("DATA_DIR").unwrap_or_else(|_| "data/storage".into()),
             },
             database: DatabaseConfig {
                 url: std::env::var("DATABASE_URL")

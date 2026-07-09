@@ -1,9 +1,10 @@
 use clap::Parser;
 use notify::{Config, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 #[derive(Parser, Debug)]
 #[command(name = "medal-clone-watcher", version, about = "Watches Medal output folder and uploads clips to your server")]
@@ -62,7 +63,34 @@ async fn main() -> anyhow::Result<()> {
         .timeout(Duration::from_secs(300))
         .build()?;
 
+    let mut seen: HashSet<PathBuf> = HashSet::new();
+
+    // Initial scan: process all existing videos, then seed seen
+    info!("Performing initial scan of {}", watch_dir.display());
+    let initial = scan_directory(&watch_dir);
+    for p in &initial {
+        info!("Initial scan found: {}", p.display());
+        tokio::spawn(upload_file(p.clone(), upload_url.clone(), token.clone(), client.clone()));
+    }
+    seen.extend(initial);
+
+    let scan_interval = Duration::from_secs(15);
+    let mut last_scan = Instant::now();
+
     for event in rx {
+        if last_scan.elapsed() >= scan_interval {
+            last_scan = Instant::now();
+            let new_files = scan_directory(&watch_dir);
+            let unseen: Vec<PathBuf> = new_files.into_iter().filter(|p| !seen.contains(p)).collect();
+            if !unseen.is_empty() {
+                info!("Periodic scan found {} new file(s)", unseen.len());
+                for p in unseen {
+                    seen.insert(p.clone());
+                    tokio::spawn(upload_file(p.clone(), upload_url.clone(), token.clone(), client.clone()));
+                }
+            }
+        }
+
         let event = match event {
             Ok(e) => e,
             Err(e) => {
@@ -71,104 +99,21 @@ async fn main() -> anyhow::Result<()> {
             }
         };
 
+        debug!("Event: {:?} {:?}", event.kind, event.paths);
+
         match event.kind {
             EventKind::Create(_) | EventKind::Modify(_) => {}
             _ => continue,
         }
 
         for path in event.paths {
-            let ext = match path.extension().and_then(|e| e.to_str()) {
-                Some(e) if e == "mp4" || e == "mov" || e == "webm" => e.to_string(),
-                _ => continue,
-            };
+            if !path.is_file() { continue; }
+            if !is_video_file(&path) { continue; }
+            if seen.contains(&path) { continue; }
+            seen.insert(path.clone());
 
             info!("New clip detected: {}", path.display());
-
-            if !wait_for_stability(&path).await {
-                warn!("File never stabilized, skipping: {}", path.display());
-                continue;
-            }
-
-            let metadata = match tokio::fs::metadata(&path).await {
-                Ok(m) => m,
-                Err(e) => {
-                    warn!("Cannot stat file (may have been deleted): {e}");
-                    continue;
-                }
-            };
-
-            if metadata.len() == 0 {
-                warn!("Empty file, skipping: {}", path.display());
-                continue;
-            }
-
-            let mut attempt = 0;
-            let max_attempts = 3;
-
-            loop {
-                attempt += 1;
-
-                let file_bytes = match tokio::fs::read(&path).await {
-                    Ok(b) => b,
-                    Err(e) => {
-                        error!("Failed to read file for upload: {e}");
-                        break;
-                    }
-                };
-                let mime = match ext.as_str() {
-                    "mp4" => "video/mp4",
-                    "mov" => "video/quicktime",
-                    "webm" => "video/webm",
-                    _ => "video/mp4",
-                };
-                let file_part = reqwest::multipart::Part::bytes(file_bytes)
-                    .file_name(format!("clip.{}", ext))
-                    .mime_str(mime)
-                    .unwrap();
-
-                let form = reqwest::multipart::Form::new()
-                    .part("file", file_part);
-
-                let result = client
-                    .post(&upload_url)
-                    .header("Authorization", format!("Bearer {}", token))
-                    .multipart(form)
-                    .send()
-                    .await;
-
-                match result {
-                    Ok(resp) if resp.status().is_success() => {
-                        info!("Uploaded {} successfully", path.display());
-                        if let Err(e) = tokio::fs::remove_file(&path).await {
-                            warn!("Failed to delete uploaded file: {e}");
-                        } else {
-                            info!("Deleted local copy: {}", path.display());
-                        }
-                        break;
-                    }
-                    Ok(resp) => {
-                        let status = resp.status();
-                        let body = resp.text().await.unwrap_or_default();
-                        warn!(
-                            "Upload failed (attempt {}/{}): HTTP {} - {}",
-                            attempt, max_attempts, status, body
-                        );
-                    }
-                    Err(e) => {
-                        warn!(
-                            "Upload error (attempt {}/{}): {e}",
-                            attempt, max_attempts
-                        );
-                    }
-                }
-
-                if attempt >= max_attempts {
-                    error!("All upload attempts failed for: {}", path.display());
-                    break;
-                }
-
-                tokio::time::sleep(Duration::from_secs(2u64.pow(attempt))).await;
-            }
+            tokio::spawn(upload_file(path, upload_url.clone(), token.clone(), client.clone()));
         }
     }
 
@@ -201,6 +146,127 @@ async fn wait_for_stability(path: &PathBuf) -> bool {
     }
 
     false
+}
+
+fn scan_directory(watch_dir: &PathBuf) -> Vec<PathBuf> {
+    let mut entries = Vec::new();
+    if let Ok(dir) = std::fs::read_dir(watch_dir) {
+        for entry in dir.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                if let Ok(sub) = std::fs::read_dir(&path) {
+                    for sub_entry in sub.flatten() {
+                        let sp = sub_entry.path();
+                        if is_video_file(&sp) {
+                            entries.push(sp);
+                        }
+                    }
+                }
+            } else if is_video_file(&path) {
+                entries.push(path);
+            }
+        }
+    }
+    entries
+}
+
+fn is_video_file(path: &PathBuf) -> bool {
+    match path.extension().and_then(|e| e.to_str()) {
+        Some(e) if e == "mp4" || e == "mov" || e == "webm" || e == "avi" || e == "mkv" => true,
+        _ => false,
+    }
+}
+
+async fn upload_file(path: PathBuf, upload_url: String, token: String, client: reqwest::Client) {
+    info!("Processing: {}", path.display());
+
+    if !wait_for_stability(&path).await {
+        warn!("File never stabilized, skipping: {}", path.display());
+        return;
+    }
+
+    let metadata = match tokio::fs::metadata(&path).await {
+        Ok(m) => m,
+        Err(e) => {
+            warn!("Cannot stat file (may have been deleted): {e}");
+            return;
+        }
+    };
+
+    if metadata.len() == 0 {
+        warn!("Empty file, skipping: {}", path.display());
+        return;
+    }
+
+    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("mp4").to_string();
+    let mut attempt = 0;
+    let max_attempts = 3;
+
+    loop {
+        attempt += 1;
+
+        let file_bytes = match tokio::fs::read(&path).await {
+            Ok(b) => b,
+            Err(e) => {
+                error!("Failed to read file for upload: {e}");
+                break;
+            }
+        };
+
+        let mime = match ext.as_str() {
+            "mp4" => "video/mp4",
+            "mov" => "video/quicktime",
+            "webm" => "video/webm",
+            _ => "video/mp4",
+        };
+
+        let file_part = reqwest::multipart::Part::bytes(file_bytes)
+            .file_name(format!("clip.{}", ext))
+            .mime_str(mime)
+            .unwrap();
+
+        let form = reqwest::multipart::Form::new().part("file", file_part);
+
+        let result = client
+            .post(&upload_url)
+            .header("Authorization", format!("Bearer {}", token))
+            .multipart(form)
+            .send()
+            .await;
+
+        match result {
+            Ok(resp) if resp.status().is_success() => {
+                info!("Uploaded {} successfully", path.display());
+                if let Err(e) = tokio::fs::remove_file(&path).await {
+                    warn!("Failed to delete uploaded file: {e}");
+                } else {
+                    info!("Deleted local copy: {}", path.display());
+                }
+                break;
+            }
+            Ok(resp) => {
+                let status = resp.status();
+                let body = resp.text().await.unwrap_or_default();
+                warn!(
+                    "Upload failed (attempt {}/{}): HTTP {} - {}",
+                    attempt, max_attempts, status, body
+                );
+            }
+            Err(e) => {
+                warn!(
+                    "Upload error (attempt {}/{}): {e}",
+                    attempt, max_attempts
+                );
+            }
+        }
+
+        if attempt >= max_attempts {
+            error!("All upload attempts failed for: {}", path.display());
+            break;
+        }
+
+        tokio::time::sleep(Duration::from_secs(2u64.pow(attempt))).await;
+    }
 }
 
 async fn install_startup() -> anyhow::Result<()> {

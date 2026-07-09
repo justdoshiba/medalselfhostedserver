@@ -7,8 +7,13 @@ use sqlx::sqlite::SqlitePool;
 use tokio::io::AsyncWriteExt;
 use uuid::Uuid;
 
+use std::path::PathBuf;
 use crate::config::Config;
 use crate::storage::Storage;
+
+fn tmp_dir(cfg: &Config) -> PathBuf {
+    PathBuf::from(&cfg.server.data_dir).join("tmp")
+}
 
 pub async fn upload_clip(
     req: HttpRequest,
@@ -59,7 +64,7 @@ pub async fn upload_clip(
                         }
                     });
 
-                let tpath = std::env::temp_dir().join(format!("{clip_id}{file_ext}"));
+                let tpath = tmp_dir(&cfg).join(format!("{clip_id}{file_ext}"));
                 let mut file = tokio::fs::File::create(&tpath).await.map_err(|e| {
                     actix_web::error::ErrorInternalServerError(format!(
                         "failed to create temp file: {e}"
@@ -140,7 +145,7 @@ pub async fn upload_clip(
         }
     }
 
-    let thumb_path = std::env::temp_dir().join(format!("{clip_id}.jpg"));
+    let thumb_path = tmp_dir(&cfg).join(format!("{clip_id}.jpg"));
     let ffmpeg_result = tokio::process::Command::new("ffmpeg")
         .args([
             "-ss",

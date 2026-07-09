@@ -34,6 +34,10 @@ async fn main() -> anyhow::Result<()> {
     db::run_migrations(&pool).await?;
     info!("Database ready");
 
+    // Ensure tmp dir exists
+    let tmp_dir = PathBuf::from(&cfg.server.data_dir).join("tmp");
+    tokio::fs::create_dir_all(&tmp_dir).await?;
+
     let storage = match cfg.storage_mode {
         config::StorageMode::S3 => {
             let s3_cfg = cfg.s3.as_ref().unwrap();
