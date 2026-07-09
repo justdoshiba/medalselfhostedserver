@@ -83,6 +83,40 @@ pub async fn delete_clip(
     }
 }
 
+pub async fn update_clip(
+    pool: web::Data<SqlitePool>,
+    cfg: web::Data<Config>,
+    req: HttpRequest,
+    path: web::Path<String>,
+    body: web::Json<serde_json::Value>,
+) -> actix_web::Result<HttpResponse> {
+    let auth_token = req
+        .headers()
+        .get("Authorization")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .map(|s| s.to_string());
+
+    match auth_token {
+        Some(t) if t == cfg.server.upload_token => {}
+        _ => return Ok(HttpResponse::Unauthorized().finish()),
+    }
+
+    let slug = path.into_inner();
+    let new_title = body.get("title").and_then(|v| v.as_str()).unwrap_or("");
+
+    if !new_title.is_empty() {
+        sqlx::query("UPDATE clips SET title = ? WHERE slug = ?")
+            .bind(new_title)
+            .bind(&slug)
+            .execute(pool.get_ref())
+            .await
+            .map_err(|e| actix_web::error::ErrorInternalServerError(e))?;
+    }
+
+    Ok(HttpResponse::Ok().json(serde_json::json!({"updated": true})))
+}
+
 pub async fn serve_video(
     pool: web::Data<SqlitePool>,
     storage: web::Data<Storage>,

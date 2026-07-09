@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Clips</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#111;color:#ddd;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;min-height:100vh}
+.header{background:#1a1a2e;padding:16px 24px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid #333;flex-wrap:wrap;gap:8px}
+.header h1{font-size:20px;font-weight:600;color:#fff}
+.header .count{color:#888;font-size:14px;margin-left:12px}
+.header-right{display:flex;align-items:center;gap:12px}
+#authInput{padding:8px 12px;border:1px solid #333;border-radius:6px;background:#222;color:#ddd;font-size:13px;width:220px}
+#authInput:focus{outline:none;border-color:#5865f2}
+.btn{padding:8px 16px;border:none;border-radius:6px;cursor:pointer;font-size:13px;font-weight:500;transition:background .15s;display:inline-flex;align-items:center;gap:6px}
+.btn-primary{background:#5865f2;color:#fff}
+.btn-primary:hover{background:#4752c4}
+.btn-danger{background:#da373c;color:#fff}
+.btn-danger:hover{background:#b0282c}
+.btn-ghost{background:transparent;color:#888;border:1px solid #333}
+.btn-ghost:hover{color:#ddd;border-color:#555}
+.container{max-width:1100px;margin:0 auto;padding:24px}
+.upload-area{background:#1a1a1e;border:2px dashed #333;border-radius:10px;padding:32px;text-align:center;margin-bottom:24px;transition:border-color .2s}
+.upload-area.dragover{border-color:#5865f2;background:#1a1a2e}
+.upload-area input[type=file]{display:none}
+.upload-label{font-size:14px;color:#888;cursor:pointer}
+.upload-label:hover{color:#ddd}
+.upload-progress{margin-top:12px;display:none}
+.upload-progress.active{display:block}
+.progress-bar{width:100%;height:6px;background:#2a2a2e;border-radius:3px;overflow:hidden;margin-top:8px}
+.progress-fill{height:100%;background:#5865f2;width:0%;transition:width .2s}
+.upload-result{margin-top:12px;font-size:13px}
+.upload-result.success{color:#4ade80}
+.upload-result.error{color:#f87171}
+.clip-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:16px}
+.clip-card{background:#1a1a1e;border-radius:10px;overflow:hidden;border:1px solid #2a2a2e;transition:border-color .15s}
+.clip-card:hover{border-color:#5865f2}
+.clip-thumb{width:100%;aspect-ratio:16/9;background:#000;display:flex;align-items:center;justify-content:center;overflow:hidden}
+.clip-thumb img{width:100%;height:100%;object-fit:cover}
+.clip-thumb .no-thumb{color:#444;font-size:32px}
+.clip-info{padding:12px 14px}
+.clip-title-wrap{display:flex;gap:8px;align-items:center;margin-bottom:6px}
+.clip-title{font-size:14px;font-weight:600;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;min-width:0}
+.clip-title-input{flex:1;padding:4px 8px;border:1px solid #333;border-radius:4px;background:#222;color:#ddd;font-size:13px;display:none;min-width:0}
+.clip-meta{font-size:12px;color:#666;display:flex;gap:12px;margin-bottom:10px}
+.clip-actions{display:flex;gap:6px;flex-wrap:wrap}
+.clip-actions .btn{flex:1;text-align:center;padding:6px 8px;font-size:12px}
+.empty-state{text-align:center;padding:80px 20px;color:#555}
+.empty-state h2{font-size:22px;color:#888;margin-bottom:8px}
+.empty-state p{font-size:14px}
+.toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#1a1a2e;color:#ddd;padding:12px 20px;border-radius:8px;font-size:13px;border:1px solid #333;z-index:100;opacity:0;transition:opacity .2s;pointer-events:none}
+.toast.show{opacity:1}
+.toast.error{background:#3b1a1a;border-color:#5c2a2a}
+@media(max-width:640px){.header-right{width:100%}#authInput{width:100%}.container{padding:12px}.clip-grid{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="header">
+<div>
+<h1>Clips <span class="count" id="clipCount">0</span></h1>
+</div>
+<div class="header-right">
+<input type="password" id="authInput" placeholder="Auth Token" value="">
+<button class="btn btn-primary" onclick="loadClips()">Load</button>
+</div>
+</div>
+<div class="container">
+<div class="upload-area" id="uploadArea">
+<input type="file" id="fileInput" accept="video/mp4,video/quicktime,video/webm">
+<div class="upload-label" onclick="document.getElementById('fileInput').click()">Drop a video here or click to upload</div>
+<div class="upload-progress" id="uploadProgress">
+<div id="uploadStatus">Uploading...</div>
+<div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
+</div>
+<div class="upload-result" id="uploadResult"></div>
+</div>
+<div class="clip-grid" id="clipGrid"></div>
+</div>
+<div class="toast" id="toast"></div>
+<script>
+let currentToken = '';
+let esc = s => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+
+function toast(msg, isError) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.toggle('error', !!isError);
+  el.classList.add('show');
+  setTimeout(() => el.classList.remove('show'), 2500);
+}
+
+async function loadClips() {
+  const input = document.getElementById('authInput');
+  currentToken = input.value.trim();
+  if (!currentToken) { toast('Enter your auth token', true); return; }
+  try {
+    const res = await fetch('/api/dashboard/data', {
+      headers: { 'Authorization': 'Bearer ' + currentToken }
+    });
+    if (!res.ok) { toast('Auth failed', true); return; }
+    const data = await res.json();
+    renderClips(data.clips);
+    document.getElementById('clipCount').textContent = data.clips.length;
+  } catch(e) {
+    toast('Network error: ' + e.message, true);
+  }
+}
+
+function renderClips(clips) {
+  const grid = document.getElementById('clipGrid');
+  if (!clips.length) {
+    grid.innerHTML = '<div class="empty-state"><h2>No clips yet</h2><p>Drop a video above to upload.</p></div>';
+    return;
+  }
+  grid.innerHTML = clips.map(c => `
+    <div class="clip-card" data-slug="${c.slug}">
+      <div class="clip-thumb">
+        ${c.thumb_url ? '<img src="' + c.thumb_url + '" loading="lazy" onerror="this.style.display=\'none\'">' : '<div class="no-thumb">🎬</div>'}
+      </div>
+      <div class="clip-info">
+        <div class="clip-title-wrap">
+          <span class="clip-title" id="tt-${c.slug}">${esc(c.title)}</span>
+          <input class="clip-title-input" id="te-${c.slug}" value="${esc(c.title)}" onblur="saveTitle('${c.slug}')" onkeydown="if(event.key==='Enter')saveTitle('${c.slug}')">
+          <button class="btn btn-ghost" style="flex:0;padding:4px 8px;font-size:11px" onclick="editTitle('${c.slug}')">✎</button>
+        </div>
+        <div class="clip-meta">
+          <span>${c.duration ? Math.round(c.duration) + 's' : '?'}</span>
+          ${c.width && c.height ? '<span>' + c.width + '×' + c.height + '</span>' : ''}
+          <span>${c.view_count || 0} views</span>
+          <span>${c.created_at ? c.created_at.slice(0,10) : ''}</span>
+        </div>
+        <div class="clip-actions">
+          <button class="btn btn-ghost" onclick="copyLink('${c.clip_url}')">Copy Link</button>
+          <button class="btn btn-ghost" onclick="copyVideo('${c.video_url}')">Copy Video</button>
+          <button class="btn btn-danger" onclick="deleteClip('${c.slug}')">Delete</button>
+        </div>
+      </div>
+    </div>
+  `).join('');
+}
+
+function copyLink(url) {
+  navigator.clipboard.writeText(url).then(() => toast('Link copied'));
+}
+
+function copyVideo(url) {
+  navigator.clipboard.writeText(url).then(() => toast('Video URL copied'));
+}
+
+function editTitle(slug) {
+  const span = document.getElementById('tt-' + slug);
+  const input = document.getElementById('te-' + slug);
+  span.style.display = 'none';
+  input.style.display = 'block';
+  input.focus();
+  input.select();
+}
+
+async function saveTitle(slug) {
+  const input = document.getElementById('te-' + slug);
+  const span = document.getElementById('tt-' + slug);
+  const val = input.value.trim();
+  if (val && val !== span.textContent) {
+    try {
+      await fetch('/api/clips/' + slug, {
+        method: 'PUT',
+        headers: { 'Authorization': 'Bearer ' + currentToken, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: val })
+      });
+      span.textContent = val;
+    } catch(e) {}
+  }
+  span.style.display = 'block';
+  input.style.display = 'none';
+}
+
+async function deleteClip(slug) {
+  if (!confirm('Delete this clip?')) return;
+  try {
+    const res = await fetch('/api/clips/' + slug, {
+      method: 'DELETE',
+      headers: { 'Authorization': 'Bearer ' + currentToken }
+    });
+    if (!res.ok) { toast('Delete failed', true); return; }
+    const card = document.querySelector('.clip-card[data-slug="' + slug + '"]');
+    if (card) card.remove();
+    toast('Deleted');
+  } catch(e) {
+    toast('Error: ' + e.message, true);
+  }
+}
+
+// Upload
+const uploadArea = document.getElementById('uploadArea');
+const fileInput = document.getElementById('fileInput');
+
+uploadArea.addEventListener('dragover', e => { e.preventDefault(); uploadArea.classList.add('dragover'); });
+uploadArea.addEventListener('dragleave', () => uploadArea.classList.remove('dragover'));
+uploadArea.addEventListener('drop', e => { e.preventDefault(); uploadArea.classList.remove('dragover'); handleFiles(e.dataTransfer.files); });
+fileInput.addEventListener('change', () => { if (fileInput.files.length) handleFiles(fileInput.files); });
+
+async function handleFiles(files) {
+  const file = files[0];
+  if (!file) return;
+  if (!file.type.startsWith('video/')) { toast('Not a video file', true); return; }
+  if (!currentToken) { toast('Enter auth token first', true); return; }
+
+  const prog = document.getElementById('uploadProgress');
+  const fill = document.getElementById('progressFill');
+  const status = document.getElementById('uploadStatus');
+  const result = document.getElementById('uploadResult');
+  prog.classList.add('active');
+  result.className = 'upload-result';
+  result.textContent = '';
+  fill.style.width = '10%';
+  status.textContent = 'Uploading ' + file.name + '...';
+
+  const form = new FormData();
+  form.append('file', file);
+  form.append('title', file.name.replace(/\.[^.]+$/, '').slice(0, 60));
+
+  try {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', '/api/upload');
+    xhr.setRequestHeader('Authorization', 'Bearer ' + currentToken);
+    xhr.upload.onprogress = e => {
+      if (e.lengthComputable) fill.style.width = Math.round((e.loaded / e.total) * 70) + '%';
+    };
+    xhr.onload = () => {
+      fill.style.width = '100%';
+      if (xhr.status >= 200 && xhr.status < 300) {
+        result.className = 'upload-result success';
+        result.textContent = 'Uploaded!';
+        setTimeout(() => { prog.classList.remove('active'); loadClips(); }, 800);
+      } else {
+        result.className = 'upload-result error';
+        result.textContent = 'Upload failed (HTTP ' + xhr.status + ')';
+      }
+    };
+    xhr.onerror = () => {
+      result.className = 'upload-result error';
+      result.textContent = 'Network error';
+    };
+    xhr.send(form);
+  } catch(e) {
+    result.className = 'upload-result error';
+    result.textContent = 'Error: ' + e.message;
+  }
+}
+
+loadClips();
+</script>
+</body>
+</html>

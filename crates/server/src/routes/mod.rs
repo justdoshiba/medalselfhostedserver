@@ -1,4 +1,5 @@
 mod clips;
+mod dashboard;
 mod embed;
 mod upload;
 
@@ -10,11 +11,23 @@ async fn health() -> HttpResponse {
 
 pub fn configure(cfg: &mut actix_web::web::ServiceConfig) {
     cfg.route("/health", actix_web::web::get().to(health))
+        .route("/dashboard", actix_web::web::get().to(dashboard::dashboard_page))
+        .route(
+            "/api/dashboard/data",
+            actix_web::web::get().to(dashboard::dashboard_data),
+        )
+        .route(
+            "/api/clips/{slug}",
+            actix_web::web::put().to(clips::update_clip),
+        )
         .service(
             actix_web::web::scope("/api")
                 .route("/upload", actix_web::web::post().to(upload::upload_clip))
                 .route("/clips", actix_web::web::get().to(clips::list_clips))
-                .route("/clips/{slug}", actix_web::web::get().to(clips::get_clip))
+                .route(
+                    "/clips/{slug}",
+                    actix_web::web::get().to(clips::get_clip),
+                )
                 .route(
                     "/clips/{slug}/video",
                     actix_web::web::get().to(clips::serve_video),
